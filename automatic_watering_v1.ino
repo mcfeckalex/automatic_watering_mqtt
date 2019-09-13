@@ -11,6 +11,10 @@
 #define control_topic "watering/control"
 #define period_topic "watering/period"
 #define duration_topic "watering/duration"
+#define reset_topic "watering/reset"
+
+#define MILLIS_TO_SECONDS 1000
+
 WiFiClient espClient;
 PubSubClient client(espClient);
 
@@ -18,9 +22,18 @@ enum topic {
   control,
   period,
   duration,
+  reset,
   nothing
 };
 
+enum app_mode {
+  WAIT,
+  PERIOD,
+  DURATION,
+  RESET
+};
+
+app_mode current_mode = PERIOD;
 
 int LED_BOARD = 0;
 int LED_CONN= 2;
@@ -30,6 +43,11 @@ int relay_state = 0;
 topic received_topic = nothing;
 char message[32];
 
+unsigned long duration_second_counter = 0;
+unsigned long duration_seconds = 5;
+unsigned long period_second_counter = 0;
+unsigned long period_time_seconds = 5;   
+unsigned long previous_millis = 0;
 
 void init_relay() {
   pinMode(RELAY, OUTPUT);
@@ -39,7 +57,7 @@ void init_relay() {
 
 void setup() {
   // put your setup code here, to run once:
-  Serial.begin(9600);
+  Serial.begin(115200);
   pinMode(LED_BOARD, OUTPUT);
   digitalWrite(LED_BOARD, LOW);
 
@@ -99,6 +117,7 @@ void reconnect() {
   client.subscribe(control_topic);
   client.subscribe(period_topic);
   client.subscribe(duration_topic);
+  client.subscribe(reset_topic);
 }
 
 void loop() {
@@ -106,6 +125,65 @@ void loop() {
     reconnect();
   }
   client.loop();
+
+
+  unsigned long current_millis = millis();
+
+  // Count seconds
+  if (current_millis-previous_millis >= MILLIS_TO_SECONDS) {
+    previous_millis = current_millis;
+    switch (current_mode) {
+    case WAIT:
+      // Wait for incoming commands
+    break;
+    
+    case PERIOD:
+      // Increment period counter
+      period_second_counter++;
+      Serial.print("Period time:");
+      Serial.print(period_second_counter);
+      Serial.print("\n");
+      // Check if it is time to water
+      if (period_second_counter >= period_time_seconds) {
+        // Start watering
+        relay_control(1);
+        // Switch to duration mode
+        current_mode = DURATION;
+        // Reset period counter
+        period_second_counter = 0;
+      }
+    break;
+
+    case DURATION:
+      // Increment duration second counter
+      duration_second_counter++;
+      Serial.print("Duration time:");
+      Serial.print(duration_second_counter);
+      Serial.print("\n");
+      // Check if it is time to water
+      if (duration_second_counter >= duration_seconds) {
+        // Stop watering
+        relay_control(0);
+        // Switch to duration mode
+        current_mode = PERIOD;
+        // Reset duration counter
+        duration_second_counter = 0;
+      }
+    break;
+    case RESET:
+      duration_second_counter = 0;
+      period_second_counter = 0;
+      current_mode = WAIT;
+      relay_control(0);
+    break;
+    
+    default:
+    break;
+    }
+  } else if (current_millis - previous_millis < 0) {
+    // Reset counter
+    previous_millis = current_millis;
+  }
 
   // Check if a new message has arrived
   switch (received_topic) {
@@ -116,8 +194,11 @@ void loop() {
         relay_control(0);
       }
 
+    case reset:
+      current_mode= RESET;
+
     default:
-    // Do nothing if topic is empty
+    // Do nothing if topic is weird
     break;
   }
 
