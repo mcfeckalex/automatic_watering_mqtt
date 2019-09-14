@@ -15,9 +15,6 @@
 
 #define MILLIS_TO_SECONDS 1000
 
-WiFiClient espClient;
-PubSubClient client(espClient);
-
 enum topic {
   control,
   period,
@@ -33,7 +30,11 @@ enum app_mode {
   RESET
 };
 
-app_mode current_mode = PERIOD;
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+// Start app in wait mode
+app_mode current_mode = WAIT;
 
 int LED_BOARD = 0;
 int LED_CONN= 2;
@@ -44,9 +45,9 @@ topic received_topic = nothing;
 char message[32];
 
 unsigned long duration_second_counter = 0;
-unsigned long duration_seconds = 5;
+unsigned long duration_time_seconds = 0;
 unsigned long period_second_counter = 0;
-unsigned long period_time_seconds = 5;   
+unsigned long period_time_seconds = 0;   
 unsigned long previous_millis = 0;
 
 void init_relay() {
@@ -54,6 +55,27 @@ void init_relay() {
   digitalWrite(RELAY, LOW);
   relay_state = 0;
 }
+
+void setup_wifi() {
+  delay(10);  
+  // We start by connecting to a WiFi network
+  Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(wifi_ssid);
+
+  WiFi.begin(wifi_ssid, wifi_password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("");
+  Serial.println("WiFi connected");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
 
 void setup() {
   // put your setup code here, to run once:
@@ -74,26 +96,6 @@ void setup() {
   Serial.print("\nMQTT Configured...\n");
 }
 
-void setup_wifi() {
-  delay(10);
-  
-  // We start by connecting to a WiFi network
-  Serial.println();
-  Serial.print("Connecting to ");
-  Serial.println(wifi_ssid);
-
-  WiFi.begin(wifi_ssid, wifi_password);
-
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-
-  Serial.println("");
-  Serial.println("WiFi connected");
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());
-}
 
 void reconnect() {
   // Loop until we're reconnected
@@ -120,6 +122,13 @@ void reconnect() {
   client.subscribe(reset_topic);
 }
 
+void reset_watering() {
+  duration_second_counter = 0;
+  period_second_counter = 0;
+  current_mode = WAIT;
+  relay_control(0);
+}
+
 void loop() {
   if (!client.connected()) {
     reconnect();
@@ -129,10 +138,14 @@ void loop() {
 
   unsigned long current_millis = millis();
 
-  // Count seconds
+  // Count different stuff in different modes.
   if (current_millis-previous_millis >= MILLIS_TO_SECONDS) {
     previous_millis = current_millis;
     switch (current_mode) {
+    Serial.print("Mode: ");
+    Serial.print(current_mode);
+    Serial.print("\n");
+    
     case WAIT:
       // Wait for incoming commands
     break;
@@ -161,7 +174,7 @@ void loop() {
       Serial.print(duration_second_counter);
       Serial.print("\n");
       // Check if it is time to water
-      if (duration_second_counter >= duration_seconds) {
+      if (duration_second_counter >= duration_time_seconds) {
         // Stop watering
         relay_control(0);
         // Switch to duration mode
@@ -171,10 +184,7 @@ void loop() {
       }
     break;
     case RESET:
-      duration_second_counter = 0;
-      period_second_counter = 0;
-      current_mode = WAIT;
-      relay_control(0);
+      reset_watering();
     break;
     
     default:
@@ -193,18 +203,47 @@ void loop() {
       } else {
         relay_control(0);
       }
-
+      // Reset topic and message  
+      received_topic = nothing;
+      memset(message, 0, sizeof(message));
+    break;
     case reset:
+      Serial.print("Resetting\n"); 
       current_mode= RESET;
+      // Reset topic and message  
+      received_topic = nothing;
+      memset(message, 0, sizeof(message));
+    break;
+
+    case period:
+      reset_watering();
+      period_time_seconds = atoi(message) * 3600 * 24;
+      current_mode = PERIOD;
+      Serial.print("New period set to \n");
+      Serial.print(period_time_seconds);
+      Serial.print("\n");
+      // Reset topic and message  
+      received_topic = nothing;
+      memset(message, 0, sizeof(message));
+    break;
+
+    case duration:
+      reset_watering();
+      duration_time_seconds = atoi(message) * 60;
+      current_mode = PERIOD;
+      Serial.print("New duration set to \n");
+      Serial.print(duration_time_seconds);
+      Serial.print("\n");
+      Serial.print("New duration set..\n");
+      // Reset topic and message  
+      received_topic = nothing;
+      memset(message, 0, sizeof(message));
+    break;
 
     default:
     // Do nothing if topic is weird
     break;
   }
-
-  // Reset topic and message  
-  received_topic = nothing;
-  memset(message, 0, sizeof(message));
 }
 
 void callback(char* topic, byte* payload, unsigned int length) {
@@ -223,6 +262,18 @@ void callback(char* topic, byte* payload, unsigned int length) {
     received_topic = control;
     memset(message, 0, sizeof(message));
     memcpy(message, payload, length); 
+  } else if (strcmp(topic, reset_topic) == 0) {
+    received_topic = reset;
+    memset(message, 0, sizeof(message));
+    memcpy(message, payload, length);
+  } else if (strcmp(topic, period_topic) == 0) {
+    received_topic = period;
+    memset(message, 0, sizeof(message));
+    memcpy(message, payload, length);
+  } else if (strcmp(topic, duration_topic) == 0) {
+    received_topic = duration;
+    memset(message, 0, sizeof(message));
+    memcpy(message, payload, length);
   }
 }
 
