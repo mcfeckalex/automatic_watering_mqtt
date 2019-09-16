@@ -12,7 +12,9 @@
 #define period_topic "watering/period"
 #define duration_topic "watering/duration"
 #define reset_topic "watering/reset"
-
+#define status_topic "watering/status"
+#define time_hours_topic "watering/time/hours"
+#define time_minutes_topic "watering/time/minutes"
 #define MILLIS_TO_SECONDS 1000
 
 enum topic {
@@ -153,9 +155,16 @@ void loop() {
     case PERIOD:
       // Increment period counter
       period_second_counter++;
+      
+      // Send time left every minute in minutes
+      if ( (period_second_counter % 60) == 0 ) {
+        send_time_left( (period_time_seconds - period_second_counter)/60 );
+      }
+      
       Serial.print("Period time:");
       Serial.print(period_second_counter);
       Serial.print("\n");
+      
       // Check if it is time to water
       if (period_second_counter >= period_time_seconds) {
         // Start watering
@@ -277,6 +286,25 @@ void callback(char* topic, byte* payload, unsigned int length) {
   }
 }
 
+void send_watering_status(int status) {
+  if (status) {
+    client.publish(status_topic, "ON", true); 
+  } if (!status) {
+    client.publish(status_topic, "OFF", true); 
+  }
+}
+
+void send_time_left(int seconds) {
+  int hours = seconds % 3600;
+  int minutes = (seconds - hours*3600) % 60;
+  Serial.print("Time until watering is: ");
+  Serial.print(hours);
+  Serial.print("hours and ");
+  Serial.print(minutes);
+  Serial.print("minutes.\n");
+  client.publish(time_hours_topic, String(seconds).c_str(), true); 
+}
+
 int blink(int period) {
   digitalWrite(LED_BOARD, LOW);
   delay(period / 2);
@@ -308,10 +336,12 @@ int led_conn_control(int signal) {
 int relay_control(int signal) {
   if (signal == 1) {
     digitalWrite(RELAY, LOW);
+    send_watering_status(1);
     led_control(1);
     Serial.print("Relay on...\n");
   } else if (signal == 0) {
     digitalWrite(RELAY, HIGH);
+    send_watering_status(0);
     led_control(0);
     Serial.print("Relay off...\n");
   }
